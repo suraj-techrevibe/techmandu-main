@@ -1,0 +1,57 @@
+name: Deploy to server!
+
+on:
+  push:
+    branches:
+      - production
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v5
+
+      - name: Install Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+
+      - name: Install Dependencies
+        run: yarn install --frozen-lockfile
+
+      - name: Create environments (constants)
+        run: |
+          cp app/constants.prod.ts app/constants.ts
+
+      - name: Build Project
+        run: yarn run build
+
+      - name: Archive Build Artifacts
+        run: |
+          tar -czf build.tar.gz \
+            build \
+            public \
+            package.json \
+            yarn.lock
+
+      - name: Copy Artifact to VM
+        uses: appleboy/scp-action@v1
+        with:
+          host: ${{ secrets.PROD_SERVER_HOST }}
+          username: ${{ secrets.PROD_SERVER_USER }}
+          key: ${{ secrets.PROD_SERVER_KEY }}
+          port: ${{ secrets.PROD_SERVER_PORT }}
+          source: build.tar.gz
+          target: /home/${{ secrets.PROD_SERVER_USER }}/techmandu/
+
+      - name: Deploy on VM
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.PROD_SERVER_HOST }}
+          username: ${{ secrets.PROD_SERVER_USER }}
+          key: ${{ secrets.PROD_SERVER_KEY }}
+          port: ${{ secrets.PROD_SERVER_PORT }}
+          script: |
+            deployfrontend
