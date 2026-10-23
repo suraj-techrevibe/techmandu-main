@@ -8,10 +8,20 @@ export function shippingFormDataIsValid(
   const shippingFormData = (
     data instanceof FormData ? Object.fromEntries<any>(data.entries()) : data
   ) as ShippingFormData;
-  return !!(
-    shippingFormData.streetLine1 &&
-    shippingFormData.city &&
-    shippingFormData.countryCode
+
+  const requiredFields = [
+    shippingFormData.fullName,
+    shippingFormData.streetLine1,
+    shippingFormData.province,
+    shippingFormData.city,
+    shippingFormData.countryCode,
+  ];
+
+  const phoneDigits = String(shippingFormData.phoneNumber ?? '').replace(/\D/g, '');
+
+  return (
+    requiredFields.every((value) => String(value ?? '').trim().length > 0) &&
+    phoneDigits.length >= 9
   );
 }
 
@@ -41,7 +51,7 @@ export const REQUIRED_SHIPPING_ADDRESS_FIELDS: (keyof Partial<
 
 export const ShippingAdressFormSchema = z.object({
   fullName: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('fullName')
-    ? z.string().min(1, { message: 'Full name is required' })
+    ? z.string().trim().min(1, { message: 'Full name is required' })
     : z.string().optional(),
 
   countryCode: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('countryCode')
@@ -49,19 +59,21 @@ export const ShippingAdressFormSchema = z.object({
     : z.string().optional(),
 
   province: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('province')
-    ? z.string().min(1, { message: 'Province is required' })
+    ? z.string().trim().min(1, { message: 'Province is required' })
     : z.string().optional(),
 
   city: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('city')
-    ? z.string().min(1, { message: 'City is required' })
+    ? z.string().trim().min(1, { message: 'City is required' })
     : z.string().optional(),
 
   streetLine1: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('streetLine1')
-    ? z.string().min(1, { message: 'Street line 1 is required' })
+    ? z.string().trim().min(1, { message: 'Street line 1 is required' })
     : z.string().optional(),
 
   phoneNumber: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('phoneNumber')
-    ? z.string().min(9, { message: 'Invalid Phone Number' })
+    ? z.string().refine((value) => value.replace(/\D/g, '').length >= 9, {
+        message: 'Invalid Phone Number',
+      })
     : z.string().optional(),
 
   postalCode: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('postalCode')
