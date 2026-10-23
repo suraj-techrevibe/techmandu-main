@@ -17,7 +17,7 @@ export function shippingFormDataIsValid(
     shippingFormData.countryCode,
   ];
 
-  const phoneDigits = String(shippingFormData.phoneNumber ?? '').replace(/\\D/g, '');
+  const phoneDigits = String(shippingFormData.phoneNumber ?? '').replace(/\D/g, '');
 
   return (
     requiredFields.every((value) => String(value ?? '').trim().length > 0) &&
@@ -71,7 +71,7 @@ export const ShippingAdressFormSchema = z.object({
     : z.string().optional(),
 
   phoneNumber: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('phoneNumber')
-    ? z.string().refine((value) => value.replace(/\\D/g, '').length >= 9, {
+    ? z.string().refine((value) => value.replace(/\D/g, '').length >= 9, {
         message: 'Invalid Phone Number',
       })
     : z.string().optional(),
