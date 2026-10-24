@@ -15,10 +15,17 @@ import {
   setCustomerForOrder,
   setOrderBillingAddress,
   setOrderShippingAddress,
+  setOrderNotes,
   setOrderShippingMethod,
   setPickUpDateTime,
 } from '~/providers/orders/order';
 import { getSessionStorage } from '~/sessions';
+import {
+  buildStreetLine2,
+  normaliseNepalPhone,
+  splitStreetLine2,
+  validateRecipient,
+} from '~/utils/nepal-checkout';
 import { shippingFormDataIsValid } from '~/utils/validation';
 
 export type CartLoaderData = Awaited<ReturnType<typeof loader>>;
@@ -42,23 +49,66 @@ export async function action({ request, params }: DataFunctionArgs) {
         const shippingFormData = Object.fromEntries<any>(
           body.entries(),
         ) as CreateAddressInput;
+
+        // The browser checks these too, but the server must not trust the browser.
+        // A form that sends ringRoad / landmark builds streetLine2 from them. An older caller that
+        // does not send them keeps its own streetLine2, and any Ring Road typed there still counts.
+        const sendsRingRoad = body.has('ringRoad');
+        const ringRoadFromForm = String(body.get('ringRoad') ?? '');
+        const ringRoad = sendsRingRoad
+          ? ringRoadFromForm
+          : splitStreetLine2(shippingFormData.streetLine2).ringRoad;
+        const recipientProblems = validateRecipient({
+          fullName: shippingFormData.fullName,
+          phoneNumber: shippingFormData.phoneNumber,
+          city: shippingFormData.city,
+          ringRoad,
+        });
+        if (Object.keys(recipientProblems).length > 0) {
+          error = {
+            errorCode: ErrorCode.UnknownError,
+            message: Object.values(recipientProblems).join('. '),
+          };
+          break;
+        }
+        const streetLine2 = sendsRingRoad
+          ? buildStreetLine2(
+              ringRoadFromForm === 'inside' || ringRoadFromForm === 'outside'
+                ? ringRoadFromForm
+                : undefined,
+              String(body.get('landmark') ?? ''),
+            )
+          : shippingFormData.streetLine2;
+
         const result = await setOrderShippingAddress(
           {
             city: shippingFormData.city,
             company: shippingFormData.company,
             countryCode: shippingFormData.countryCode,
             customFields: shippingFormData.customFields,
-            fullName: shippingFormData.fullName,
-            phoneNumber: shippingFormData.phoneNumber,
+            fullName: shippingFormData.fullName?.trim(),
+            // Stored as plain local digits, the same form the courier booking uses.
+            phoneNumber: normaliseNepalPhone(shippingFormData.phoneNumber),
             postalCode: shippingFormData.postalCode,
             province: shippingFormData.province,
             streetLine1: shippingFormData.streetLine1,
-            streetLine2: shippingFormData.streetLine2,
+            streetLine2,
           },
           { request },
         );
         if (result.setOrderShippingAddress.__typename === 'Order') {
           activeOrder = result.setOrderShippingAddress;
+          if (body.has('recipientNote')) {
+            // The note is nice to have: a failure here must not block checkout.
+            try {
+              await setOrderNotes(
+                String(body.get('recipientNote') ?? '').trim().slice(0, 500),
+                { request },
+              );
+            } catch (e) {
+              console.error('Could not save the recipient note', e);
+            }
+          }
         } else {
           error = result.setOrderShippingAddress;
         }

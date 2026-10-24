@@ -14,12 +14,20 @@ import {
 } from '~/generated/graphql';
 import { ActiveOrderFetcherReturnType, Province } from '~/types';
 import {
+  buildStreetLine2,
+  isValleyCity,
+  RingRoad,
+  splitStreetLine2,
+  validateRecipient,
+} from '~/utils/nepal-checkout';
+import {
   REQUIRED_SHIPPING_ADDRESS_FIELDS,
-  ShippingAdressFormSchema,
+  RecipientShippingFormSchema,
 } from '~/utils/validation';
 import { FieldsetInput } from '../account/FieldsetInput';
 import { FieldsetSelect } from '../account/FieldSetSelect';
 import { Button } from '../ui/button';
+import { RecipientDetails, RecipientDetailsInForm } from './RecipientDetails';
 import { ShippingAddressSelector } from './ShippingAddressSelector';
 
 interface Props {
@@ -30,6 +38,10 @@ interface Props {
   activeOrder?: OrderDetailFragment;
   deliveryAreas: Province[];
 }
+/** Pickup orders store the text 'default' in the address. It is not a real name or phone number. */
+const realValue = (value: string | null | undefined) =>
+  value && value !== 'default' ? value : '';
+
 export function ShippingAddressForm({
   addresses,
   availableCountries,
@@ -72,6 +84,29 @@ export function ShippingAddressForm({
     shippingAddress?.streetLine1 ?? '',
   );
 
+  const initialStreetLine2 = splitStreetLine2(
+    realValue(shippingAddress?.streetLine2),
+  );
+  const [ringRoad, setRingRoad] = useState<RingRoad | undefined>(
+    initialStreetLine2.ringRoad,
+  );
+  const [landmark, setLandmark] = useState(initialStreetLine2.landmark);
+  const [note, setNote] = useState('');
+  const [localErrors, setLocalErrors] = useState<{
+    ringRoad?: string;
+    recipient?: string;
+  }>({});
+
+  // The first saved address is selected without a click, so load its Ring Road answer once.
+  useEffect(() => {
+    const first = splitStreetLine2(addresses?.[selectedAddressIndex]?.streetLine2);
+    if (addresses && addresses.length > 0) {
+      setRingRoad(first.ringRoad);
+      setLandmark(first.landmark);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const cities = useMemo(() => {
     if (!province) return [];
     const selectedProvince = deliveryAreas.find(
@@ -107,37 +142,76 @@ export function ShippingAddressForm({
     }
   }, [fetcher.data]);
 
-  const handleSubmitSelectedAddress = () => {
-    if (selectedAddressIndex !== null) {
-      const selectedAddress = addresses?.[selectedAddressIndex];
-      if (selectedAddress) {
-        const formData = new FormData();
-        formData.append('action', 'setCheckoutShipping');
-        formData.append('countryCode', selectedAddress.country.code);
-        Object.keys(selectedAddress).forEach((key) => {
-          formData.append(key, (selectedAddress as any)[key]);
-        });
-
-        fetcher.submit(formData, {
-          method: 'post',
-          action: '/api/active-order',
-        });
-      }
+  /** Sends one address to the server, with the Ring Road, landmark and gift note chosen above. */
+  const submitRecipientAddress = (address: {
+    fullName?: string | null;
+    company?: string | null;
+    streetLine1?: string | null;
+    city?: string | null;
+    province?: string | null;
+    postalCode?: string | null;
+    countryCode?: string | null;
+    phoneNumber?: string | null;
+  }) => {
+    const problems = validateRecipient({
+      fullName: address.fullName,
+      phoneNumber: address.phoneNumber,
+      city: address.city,
+      ringRoad,
+    });
+    if (problems.fullName || problems.phoneNumber) {
+      setLocalErrors({
+        recipient:
+          "This address needs the recipient's name and a Nepal phone number. Enter the address manually to fix it.",
+      });
+      return;
     }
-  };
+    if (problems.ringRoad) {
+      setLocalErrors({ ringRoad: problems.ringRoad });
+      return;
+    }
+    setLocalErrors({});
 
-  const submitSameShippingAsBilling = () => {
-    if (!billingAddress) return;
     const formData = new FormData();
     formData.append('action', 'setCheckoutShipping');
-    Object.keys(billingAddress).forEach((key) => {
-      formData.append(key, (billingAddress as any)[key]);
-    });
+    formData.append('fullName', address.fullName ?? '');
+    formData.append('company', address.company ?? '');
+    formData.append('streetLine1', address.streetLine1 ?? '');
+    formData.append('city', address.city ?? '');
+    formData.append('province', address.province ?? '');
+    formData.append('postalCode', address.postalCode ?? '');
+    formData.append('countryCode', address.countryCode ?? '');
+    formData.append('phoneNumber', address.phoneNumber ?? '');
+    formData.append('ringRoad', isValleyCity(address.city) ? ringRoad ?? '' : '');
+    formData.append('landmark', landmark);
+    formData.append('recipientNote', note);
 
     fetcher.submit(formData, {
       method: 'post',
       action: '/api/active-order',
     });
+  };
+
+  const handleSelectAddress = (index: number) => {
+    setSelectedAddressIndex(index);
+    const picked = splitStreetLine2(addresses?.[index]?.streetLine2);
+    setRingRoad(picked.ringRoad);
+    setLandmark(picked.landmark);
+    setLocalErrors({});
+  };
+
+  const handleSubmitSelectedAddress = () => {
+    const selectedAddress = addresses?.[selectedAddressIndex];
+    if (!selectedAddress) return;
+    submitRecipientAddress({
+      ...selectedAddress,
+      countryCode: selectedAddress.country.code,
+    });
+  };
+
+  const submitSameShippingAsBilling = () => {
+    if (!billingAddress) return;
+    submitRecipientAddress(billingAddress);
   };
 
   const shouldShowAdressSelector =
@@ -147,9 +221,26 @@ export function ShippingAddressForm({
     <div className="relative">
       <ShippingAddressSelector
         addresses={addresses!}
-        onChange={setSelectedAddressIndex}
+        onChange={handleSelectAddress}
         selectedAddressIndex={selectedAddressIndex}
       />
+      <div className="mt-4">
+        <RecipientDetails
+          isValley={isValleyCity(addresses?.[selectedAddressIndex]?.city)}
+          ringRoad={ringRoad}
+          onRingRoadChange={setRingRoad}
+          landmark={landmark}
+          onLandmarkChange={setLandmark}
+          note={note}
+          onNoteChange={setNote}
+          errors={{ ringRoad: localErrors.ringRoad }}
+        />
+      </div>
+      {localErrors.recipient || fetcher.data?.errorMessage ? (
+        <p className="mt-3 italic text-red-500">
+          {localErrors.recipient ?? fetcher.data?.errorMessage}
+        </p>
+      ) : null}
       <Button
         className="my-3 col-span-2 w-5/6"
         disabled={isSubmitting}
@@ -170,7 +261,7 @@ export function ShippingAddressForm({
 
   const ShippingForm = (
     <ValidatedForm
-      validator={withZod(ShippingAdressFormSchema)}
+      validator={withZod(RecipientShippingFormSchema)}
       className="relative sm:grid sm:grid-cols-2 gap-3"
       fetcher={fetcher}
       method="post"
@@ -188,13 +279,9 @@ export function ShippingAddressForm({
       <FieldsetInput
         className="bg-transparent"
         name="fullName"
-        label="Full Name"
+        label="Recipient's full name"
         autoComplete="shipping name"
-        defaultValue={
-          shippingAddress?.fullName ||
-          `${activeOrder?.customer?.firstName} ${activeOrder?.customer?.lastName}` ||
-          ''
-        }
+        defaultValue={realValue(shippingAddress?.fullName)}
         required={REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('fullName')}
       />
 
@@ -202,7 +289,7 @@ export function ShippingAddressForm({
         className="bg-transparent"
         name="company"
         label="Company"
-        defaultValue={shippingAddress?.company ?? ''}
+        defaultValue={realValue(shippingAddress?.company)}
         autoComplete="organization"
         required={REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('company')}
       />
@@ -279,10 +366,22 @@ export function ShippingAddressForm({
       <FieldsetInput
         className="bg-transparent"
         name="phoneNumber"
-        label="Phone Number"
+        label="Recipient's phone in Nepal"
+        type="tel"
+        placeholder="98XXXXXXXX"
         autoComplete="tel"
-        defaultValue={shippingAddress?.phoneNumber ?? ''}
+        defaultValue={realValue(shippingAddress?.phoneNumber)}
         required={REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('phoneNumber')}
+      />
+
+      <RecipientDetailsInForm
+        isValley={isValleyCity(city)}
+        ringRoad={ringRoad}
+        onRingRoadChange={setRingRoad}
+        landmark={landmark}
+        onLandmarkChange={setLandmark}
+        note={note}
+        onNoteChange={setNote}
       />
 
       {fetcher?.data?.errorMessage ? (
@@ -297,15 +396,32 @@ export function ShippingAddressForm({
   );
 
   const uiForSameAsBilling = (
-    <Button
-      className="my-3 col-span-2 w-full"
-      disabled={isSubmitting}
-      type="button"
-      onClick={submitSameShippingAsBilling}
-    >
-      Proceed To Payment
-      {isSubmitting && <ArrowPathIcon className="w-5 h-5 animate-spin" />}
-    </Button>
+    <div className="space-y-3">
+      <RecipientDetails
+        isValley={isValleyCity(billingAddress?.city)}
+        ringRoad={ringRoad}
+        onRingRoadChange={setRingRoad}
+        landmark={landmark}
+        onLandmarkChange={setLandmark}
+        note={note}
+        onNoteChange={setNote}
+        errors={{ ringRoad: localErrors.ringRoad }}
+      />
+      {localErrors.recipient || fetcher.data?.errorMessage ? (
+        <p className="italic text-red-500">
+          {localErrors.recipient ?? fetcher.data?.errorMessage}
+        </p>
+      ) : null}
+      <Button
+        className="my-3 col-span-2 w-full"
+        disabled={isSubmitting}
+        type="button"
+        onClick={submitSameShippingAsBilling}
+      >
+        Proceed To Payment
+        {isSubmitting && <ArrowPathIcon className="w-5 h-5 animate-spin" />}
+      </Button>
+    </div>
   );
 
   const finalUiToDisplay = sameAsBilling
@@ -328,7 +444,7 @@ export function ShippingAddressForm({
           htmlFor="sameAsBilling"
           className="w-full cursor-pointer text-primary"
         >
-          Same as billing address
+          The recipient is the billing contact (I am in Nepal)
         </label>
       </div>
       {finalUiToDisplay}

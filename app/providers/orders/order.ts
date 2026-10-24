@@ -100,6 +100,17 @@ export function getTrackMyOrder(
   return sdk.TrackMyOrder({ orderCode, email }, options);
 }
 
+/**
+ * Saves the "who is this gift for" note on the order (custom field orderNotes).
+ * Reuses the setPickUpDateTime mutation, which is a plain setOrderCustomFields call, so no codegen is needed.
+ */
+export function setOrderNotes(note: string, options: QueryOptions) {
+  return sdk.setPickUpDateTime(
+    { input: { customFields: { orderNotes: note } } },
+    options,
+  );
+}
+
 export function setPickUpDateTime(input: string, options: QueryOptions) {
   return sdk.setPickUpDateTime(
     {
