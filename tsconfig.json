@@ -15,6 +15,7 @@
       "~/*": ["./app/*"]
     },
     "noEmit": true,
+    "allowImportingTsExtensions": true,
     "forceConsistentCasingInFileNames": true,
     "allowJs": true
   }

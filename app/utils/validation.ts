@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { OrderDetailFragment } from '~/generated/graphql';
 import { ShippingFormData } from '~/types';
+import { isValleyCity, normaliseNepalPhone } from '~/utils/nepal-checkout';
 
 export function shippingFormDataIsValid(
   data: FormData | Record<string, string>,
@@ -87,4 +88,32 @@ export const ShippingAdressFormSchema = z.object({
   company: REQUIRED_SHIPPING_ADDRESS_FIELDS.includes('company')
     ? z.string().min(1, { message: 'Company is required' })
     : z.string().optional(),
+});
+
+/**
+ * Shipping address for a recipient in Nepal: the phone must be a usable Nepal number (the courier
+ * calls it on delivery day) and Valley addresses must say whether they are inside or outside Ring Road.
+ * Billing keeps the looser ShippingAdressFormSchema above.
+ */
+export const RecipientShippingFormSchema = ShippingAdressFormSchema.extend({
+  phoneNumber: z
+    .string()
+    .refine((value) => normaliseNepalPhone(value) !== undefined, {
+      message: "Enter the recipient's Nepal phone number, e.g. 98XXXXXXXX",
+    }),
+  ringRoad: z.string().optional(),
+  landmark: z.string().optional(),
+  recipientNote: z.string().max(500, { message: 'Keep the note under 500 characters' }).optional(),
+}).superRefine((data, ctx) => {
+  if (
+    isValleyCity(data.city) &&
+    data.ringRoad !== 'inside' &&
+    data.ringRoad !== 'outside'
+  ) {
+    ctx.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ['ringRoad'],
+      message: 'Choose inside or outside Ring Road',
+    });
+  }
 });
